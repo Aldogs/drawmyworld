@@ -6,7 +6,7 @@ function App() {
 
   const handleUpload = async () => {
     const base64 = await toBase64(file);
-    const res = await fetch('http://localhost:5000/api/upload', {
+    const res = await fetch('https://drawmyworld-api.onrender.com/api/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageData: base64 }),
