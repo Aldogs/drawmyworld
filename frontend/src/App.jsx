@@ -1,58 +1,128 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import './App.css';
 
 function App() {
   const [file, setFile] = useState(null);
   const [images, setImages] = useState([]);
   const [isWebcamActive, setIsWebcamActive] = useState(false);
+  const [error, setError] = useState(null);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
+  // Cleanup webcam on component unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
   const startWebcam = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      videoRef.current.srcObject = stream;
-      streamRef.current = stream;
-      setIsWebcamActive(true);
+      setError(null);
+      console.log('Requesting webcam access...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      });
+      console.log('Webcam access granted:', stream);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        setIsWebcamActive(true);
+      } else {
+        console.error('Video element not found');
+        setError('Video element not found');
+      }
     } catch (err) {
       console.error("Error accessing webcam:", err);
-      alert("Couldn't access the webcam. Please make sure it's connected and you've given permission to use it.");
+      setError(`Couldn't access the webcam: ${err.message}`);
     }
   };
 
   const stopWebcam = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      console.log('Stopping webcam...');
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('Track stopped:', track.label);
+      });
       videoRef.current.srcObject = null;
+      streamRef.current = null;
       setIsWebcamActive(false);
     }
   };
 
   const captureImage = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
-    canvas.toBlob(blob => {
-      const file = new File([blob], "animal-drawing.jpg", { type: "image/jpeg" });
-      setFile(file);
-      stopWebcam();
-    }, 'image/jpeg');
+    try {
+      if (!videoRef.current) {
+        throw new Error('Video element not found');
+      }
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Could not get canvas context');
+      }
+      
+      ctx.drawImage(videoRef.current, 0, 0);
+      canvas.toBlob(blob => {
+        if (blob) {
+          const file = new File([blob], "animal-drawing.jpg", { type: "image/jpeg" });
+          setFile(file);
+          stopWebcam();
+        } else {
+          throw new Error('Failed to create image blob');
+        }
+      }, 'image/jpeg', 0.95);
+    } catch (err) {
+      console.error('Error capturing image:', err);
+      setError(`Failed to capture image: ${err.message}`);
+    }
   };
 
   const handleUpload = async () => {
     if (!file) {
-      alert("Please capture or upload a drawing first!");
+      setError("Please capture or upload a drawing first!");
       return;
     }
-    const base64 = await toBase64(file);
-    const res = await fetch('https://drawmyworld-api.onrender.com/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageData: base64 }),
-    });
-    const data = await res.json();
-    setImages(prev => [...prev, { id: Date.now(), src: data.imageData }]);
+
+    try {
+      setError(null);
+      console.log('Converting file to base64...');
+      const base64 = await toBase64(file);
+      console.log('Uploading to server...');
+      
+      const res = await fetch('https://drawmyworld-api.onrender.com/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageData: base64 }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server responded with status: ${res.status}`);
+      }
+
+      const data = await res.json();
+      console.log('Server response:', data);
+      
+      if (data.imageData) {
+        setImages(prev => [...prev, { id: Date.now(), src: data.imageData }]);
+        setFile(null); // Clear the file after successful upload
+      } else {
+        throw new Error('No image data in server response');
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+      setError(`Failed to upload: ${err.message}`);
+    }
   };
 
   const toBase64 = file =>
@@ -63,9 +133,13 @@ function App() {
       reader.onerror = error => reject(error);
     });
 
-  const clearImages = () => setImages([]);
+  const clearImages = () => {
+    console.log('Clearing images...');
+    setImages([]);
+  };
 
   const removeImage = id => {
+    console.log('Removing image:', id);
     setImages(prev => prev.filter(img => img.id !== id));
   };
 
@@ -75,6 +149,13 @@ function App() {
         <h1>🎨 Draw My Zoo</h1>
         <p className="tagline">Draw your favorite animals and watch them come to life in our magical zoo!</p>
       </header>
+
+      {error && (
+        <div className="error-message">
+          {error}
+          <button onClick={() => setError(null)} className="error-close">×</button>
+        </div>
+      )}
 
       <section className="features">
         <div className="feature-card">
